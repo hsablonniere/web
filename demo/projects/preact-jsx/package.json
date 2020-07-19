@@ -6,9 +6,9 @@
   "main": "index.js",
   "scripts": {
     "start": "es-dev-server",
-    "test": "web-test-runner test/**/*.test.jsx",
-    "test:ci": "node ../../../packages/test-runner/dist/test-runner.js test/**/*.test.jsx",
-    "test:watch": "web-test-runner test/**/*.test.jsx --watch"
+    "test": "web-test-runner \"test/**/*.test.js\"x",
+    "test:ci": "node ../../../packages/test-runner/dist/test-runner.js \"test/**/*.test.js\"x",
+    "test:watch": "web-test-runner \"test/**/*.test.js\"x --watch"
   },
   "dependencies": {
     "preact": "^10.4.4"

@@ -55,7 +55,8 @@
     "log-update": "^4.0.0",
     "open": "^7.0.4",
     "portfinder": "^1.0.26",
-    "source-map": "^0.7.3"
+    "source-map": "^0.7.3",
+    "xml": "^1.0.1"
   },
   "devDependencies": {
     "@types/command-line-args": "^5.0.0",
@@ -63,6 +64,7 @@
     "@types/diff": "^4.0.2",
     "@types/globby": "^9.1.0",
     "@types/istanbul-lib-report": "^3.0.0",
-    "@types/istanbul-reports": "^1.1.2"
+    "@types/istanbul-reports": "^1.1.2",
+    "@types/xml": "^1.0.5"
   }
 }

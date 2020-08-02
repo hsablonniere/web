@@ -6,6 +6,7 @@ import { createSourceMapFunction, SourceMapFunction } from '../utils/createSourc
 import { createStackLocationRegExp } from '../utils/createStackLocationRegExp';
 
 import XML from 'xml';
+import { replaceRelativeStackFilePath } from '../utils/replaceRelativeStackFilePath';
 
 export interface JUnitReporterArgs {
   outputPath?: string;
@@ -66,13 +67,9 @@ interface TestSuiteXMLAttributes {
   }
 }
 
-// A subset of invalid characters as defined in http://www.w3.org/TR/xml/#charsets that can occur in e.g. stacktraces
-// lifted from https://github.com/michaelleeallen/mocha-junit-reporter/blob/master/index.js (licensed MIT)
-// other portions of code adapted from same
-// regex lifted from https://github.com/MylesBorins/xml-sanitizer/ (licensed MIT)
-const INVALID_CHARACTERS_REGEX =
-  // eslint-disable-next-line no-control-regex
-  /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007f-\u0084\u0086-\u009f\uD800-\uDFFF\uFDD0-\uFDFF\uFFFF\uC008]/g;
+type StackAndSourceMapReplacer =
+  (userAgent: string, string: string) =>
+    Promise<string>;
 
 const assignSessionPropertiesToTests =
   ({ tests, ...rest }: TestSession): TestResultWithMetadata[] =>
@@ -118,6 +115,14 @@ const getTestDurationInSeconds =
       (typeof duration === 'undefined') ? 0
     : duration / 1000;
 
+// A subset of invalid characters as defined in http://www.w3.org/TR/xml/#charsets that can occur in e.g. stacktraces
+// lifted from https://github.com/michaelleeallen/mocha-junit-reporter/blob/master/index.js (licensed MIT)
+// other portions of code adapted from same
+// regex lifted from https://github.com/MylesBorins/xml-sanitizer/ (licensed MIT)
+const INVALID_CHARACTERS_REGEX =
+  // eslint-disable-next-line no-control-regex
+  /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007f-\u0084\u0086-\u009f\uD800-\uDFFF\uFDD0-\uFDFF\uFFFF\uC008]/g;
+
 const stripXMLInvalidChars =
   (x: string): string =>
     x.replace(INVALID_CHARACTERS_REGEX, '');
@@ -125,14 +130,14 @@ const stripXMLInvalidChars =
 /**
  * Makes a `<failure>` element
  */
-function testFailureXMLElement(test: TestResult): TestFailureXMLElement {
-  const { error } = test;
+async function testFailureXMLElement(replacer: StackAndSourceMapReplacer, test: TestResultWithMetadata): Promise<TestFailureXMLElement> {
+  const { error, userAgent = '' } = test;
 
   const message =
-    stripXMLInvalidChars(error?.message ?? '');
+   stripXMLInvalidChars(await replacer(userAgent, error?.message ?? ''));
 
   const stack =
-    stripXMLInvalidChars(error?.stack ?? '');
+   stripXMLInvalidChars(await replacer(userAgent, error?.stack ?? ''));
 
   const type =
     stack.match(/^\w+Error:/) ? stack.split(':')[0] : '';
@@ -169,16 +174,18 @@ function testCaseXMLAttributes(test: TestResult): TestCaseXMLAttributes {
 /**
  * Makes a `<testcase>` element
  */
-function testCaseXMLElement(test: TestResult): TestCaseXMLElement {
-  const attributes = testCaseXMLAttributes(test);
+const testCaseXMLElement =
+  (replacer: StackAndSourceMapReplacer) =>
+    async function testCaseXMLElement(test: TestResultWithMetadata): Promise<TestCaseXMLElement> {
+      const attributes = testCaseXMLAttributes(test);
 
-  if (test.skipped)
-    return { testcase: [attributes, { skipped: null }]}
-  else if (isFailedTest(test))
-    return { testcase: [attributes, { failure: testFailureXMLElement(test) }] }
-  else
-    return { testcase: attributes }
-}
+      if (test.skipped)
+        return { testcase: [attributes, { skipped: null }]}
+      else if (isFailedTest(test))
+        return { testcase: [attributes, { failure: await testFailureXMLElement(replacer, test) }] }
+      else
+        return { testcase: attributes }
+    }
 
 /**
  * Makes attributes for a `<testsuite>` element
@@ -246,12 +253,12 @@ function testSuitePropertiesXMLElement(name: string, value: string): TestSuitePr
  * then stringifies the XML.
  * @param sessions Test Sessions
  */
-function getTestRunXML(sessions: TestSession[]): string {
+async function getTestRunXML(sessions: TestSession[], replacer: StackAndSourceMapReplacer): Promise<string> {
   const testsuites =
-    Object.entries(sessions
+    await Promise.all(Object.entries(sessions
       .flatMap(assignSessionPropertiesToTests)
       .reduce(toResultsWithMetadataByBrowserName, {} as TestResultsWithMetadataByBrowserName))
-    .map(([name, tests]) => {
+    .map(async ([name, tests]) => {
       const [{ testRun = 0, userAgent = '' }] = tests;
       const attributes =
         testSuiteXMLAttributes(name, testRun, tests);
@@ -260,7 +267,7 @@ function getTestRunXML(sessions: TestSession[]): string {
         testSuitePropertiesXMLElement(name, userAgent);
 
       const testcases =
-        tests.map(testCaseXMLElement);
+        await Promise.all(tests.map(testCaseXMLElement(replacer)));
 
       const testsuite =
         [attributes, { properties }, ...testcases];
@@ -272,7 +279,7 @@ function getTestRunXML(sessions: TestSession[]): string {
         testsuite,
         'system-out': systemOut
       }
-    });
+    }));
 
   return XML({ testsuites }, { declaration: true, indent: '  ' })
 }
@@ -286,46 +293,64 @@ export function junitReporter({
   outputPath = './test-results.xml',
 }: JUnitReporterArgs = {}): Reporter {
   let args: ReporterArgs;
-  let favoriteBrowser: string;
   let stackLocationRegExp: RegExp;
   let sourceMapFunction: SourceMapFunction;
   let config: TestRunnerCoreConfig;
+  let replacer: StackAndSourceMapReplacer;
 
   return {
     start(_args) {
       args = _args;
-      favoriteBrowser =
-        args.browserNames.find(browserName => {
-          const n = browserName.toLowerCase();
-          return n.includes('chrome') || n.includes('chromium') || n.includes('firefox');
-        }) ?? args.browserNames[0];
-      stackLocationRegExp = createStackLocationRegExp(
-        args.config.protocol,
-        args.config.hostname,
-        args.config.port,
-      );
-      sourceMapFunction = createSourceMapFunction(
-        args.config.protocol,
-        args.config.hostname,
-        args.config.port,
-      );
       config = args.config
+
+      const { protocol, hostname, port, rootDir } = config;
+
+      stackLocationRegExp =
+        createStackLocationRegExp(protocol, hostname, port);
+
+      sourceMapFunction =
+        createSourceMapFunction(protocol, hostname, port);
+
+      replacer =
+        (userAgent: string, string: string) =>
+          replaceRelativeStackFilePath(
+            string,
+            userAgent,
+            rootDir,
+            stackLocationRegExp,
+            sourceMapFunction,
+          );
     },
 
     onTestRunStarted({ testRun }) {
       if (testRun !== 0) {
         // create a new source map function to clear the cached source maps
-        sourceMapFunction = createSourceMapFunction(
-          args.config.protocol,
-          args.config.hostname,
-          args.config.port,
-        );
+        const { protocol, hostname, port, rootDir } = config;
+
+        sourceMapFunction =
+          createSourceMapFunction(protocol, hostname, port);
+
+        replacer =
+          (userAgent: string, string: string) =>
+            replaceRelativeStackFilePath(
+              string,
+              userAgent,
+              rootDir,
+              stackLocationRegExp,
+              sourceMapFunction,
+            );
       }
     },
 
-    onTestRunFinished({ sessions, testRun, testCoverage, focusedTestFile }) {
-      const xml = getTestRunXML(sessions);
-      const filepath = path.join(process.cwd(), outputPath);
+    async onTestRunFinished({ sessions }) {
+      const xml =
+        await getTestRunXML(sessions, replacer);
+
+      console.log(xml)
+
+      const filepath =
+        path.join(process.cwd(), outputPath);
+
       fs.writeFileSync(filepath, xml);
     },
 

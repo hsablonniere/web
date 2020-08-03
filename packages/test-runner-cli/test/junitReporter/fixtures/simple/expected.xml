@@ -1,26 +1,20 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <testsuites>
-  <testsuite name="Chrome" id="0" tests="4" skipped="1" errors="1" failures="1" time="0.001">
+  <testsuite name="Chrome" id="0" tests="5" skipped="1" errors="1" failures="1" time="0.001">
     <properties>
-      <property name="Chrome" value="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_14_6) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/84.0.4147.105 Safari/537.36"/>
+      <property name="browser.name" value="Chrome"/>
+      <property name="browser.userAgent" value="<<useragent>>"/>
+      <property name="test.fileName" value="<<cwd>>/simple.test.js"/>
     </properties>
     <testcase name="under addition" time="0.001" classname="real numbers forming a monoid"/>
     <testcase name="null hypothesis" time="0.001" classname="off-by-one boolean logic errors"/>
     <testcase name="asserts error" time="0.001" classname="off-by-one boolean logic errors">
       <failure message="expected false to be true" type="AssertionError"><![CDATA[AssertionError: expected false to be true
-    at Context.<anonymous> (simple.test.js?wtr-session-id=9819abaf-fae3-4d5b-86d0-a351e07fa814:13:29)
-    at callFn (__web-test-runner__/test-framework.js:5856:21)
-    at Test.Runnable.run (__web-test-runner__/test-framework.js:5843:7)
-    at Runner.runTest (__web-test-runner__/test-framework.js:6587:10)
-    at http://localhost:9268/__web-test-runner__/test-framework.js:6713:12
-    at next (__web-test-runner__/test-framework.js:6504:14)
-    at http://localhost:9268/__web-test-runner__/test-framework.js:6514:7
-    at next (__web-test-runner__/test-framework.js:6416:14)
-    at http://localhost:9268/__web-test-runner__/test-framework.js:6482:5
-    at timeslice (__web-test-runner__/test-framework.js:151:27)]]></failure>
+    at Context.<anonymous> (simple.test.js?wtr-session-id=9819abaf-fae3-4d5b-86d0-a351e07fa814:13:29)]]></failure>
     </testcase>
     <testcase name="tbd: confirm true positive" time="0" classname="off-by-one boolean logic errors">
       <skipped/>
     </testcase>
+    <testcase name="reports logs to JUnit" time="0.001" classname="logging during a test"/>
   </testsuite>
 </testsuites>

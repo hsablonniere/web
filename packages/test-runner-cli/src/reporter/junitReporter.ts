@@ -6,20 +6,18 @@ import XML from 'xml';
 
 export interface JUnitReporterArgs {
   outputPath?: string;
+  reportLogs?: boolean;
 }
 
-type TestSessionMetadata =
-  Omit<TestSession, 'tests'>;
+type TestSessionMetadata = Omit<TestSession, 'tests'>;
 
-type TestResultWithMetadata =
-  TestResult & TestSessionMetadata;
+type TestResultWithMetadata = TestResult & TestSessionMetadata & { suiteName: string };
 
 // Browser name is highly dynamic, hence `string`
-type TestResultsWithMetadataByBrowserName =
-  Record<string, TestResultWithMetadata[]>;
+type TestResultsWithMetadataByBrowserName = Record<string, TestResultWithMetadata[]>;
 
 interface TestFailureXMLElement {
-  _cdata?: string|string[];
+  _cdata?: string | string[];
   _attr: {
     message: string;
     type: string;
@@ -31,7 +29,7 @@ interface TestCaseXMLAttributes {
     name: string;
     time: number;
     classname: string;
-  }
+  };
 }
 
 type PassedTestCase = TestCaseXMLAttributes;
@@ -42,14 +40,14 @@ interface TestCaseXMLElement {
   testcase: PassedTestCase | SkippedTestCase | FailedTestCase;
 }
 
-type TestSuitePropertiesXMLElement = [{
+type TestSuitePropertiesXMLElement = {
   property: {
     _attr: {
       name: string;
       value: string;
-    }
-  }
-}]
+    };
+  };
+};
 
 interface TestSuiteXMLAttributes {
   _attr: {
@@ -60,51 +58,44 @@ interface TestSuiteXMLAttributes {
     errors: number;
     failures: number;
     time: number;
-  }
+  };
 }
 
-const assignSessionPropertiesToTests =
-  ({ tests, ...rest }: TestSession): TestResultWithMetadata[] =>
-    tests.map(x => ({ ...x, ...rest }));
+const assignSessionAndSuitePropertiesToTests = ({
+  testResults,
+  ...rest
+}: TestSession): TestResultWithMetadata[] =>
+  (testResults?.suites ?? []).flatMap(suite =>
+    suite.tests.map(test => ({ ...test, ...rest, suiteName: suite.name })),
+  );
 
-const toResultsWithMetadataByBrowserName =
-  (acc: TestResultsWithMetadataByBrowserName, test: TestResultWithMetadata): TestResultsWithMetadataByBrowserName =>
-    ({ ...acc, [test.browserName]: [...acc[test.browserName] ?? [], test] });
+const toResultsWithMetadataByBrowserName = (
+  acc: TestResultsWithMetadataByBrowserName,
+  test: TestResultWithMetadata,
+): TestResultsWithMetadataByBrowserName => ({
+  ...acc,
+  [test.browser.name]: [...(acc[test.browser.name] ?? []), test],
+});
 
-const escapeLogs =
-  (browserName: string) =>
-    (x: TestResultWithMetadata) =>
-      x.logs.map(x =>
-        x.map(y =>
-          ({ _cdata: `${browserName} ${y}` })));
+const escapeLogs = (test: TestResultWithMetadata) =>
+  test.logs.flatMap(x => x.map(_cdata => ({ _cdata })));
 
-const isFailedTest =
-  (test: TestResult): boolean =>
-    // NB: shouldn't have to check for `error`,
-    // but ATM all tests are coming back `passed: false`
-    !test.passed &&
-    !!test.error
+const isFailedTest = (test: TestResult): boolean =>
+  // NB: shouldn't have to check for `error`,
+  // but ATM all tests are coming back `passed: false`
+  !test.passed && !!test.error;
 
-const addSuiteTime =
-  (time: number, test: TestResultWithMetadata) =>
-    time + (test.duration || 0) / 1000
+const isSkippedTest = (test: TestResult): boolean => !!test.skipped;
 
-const getTestName =
-  (test: TestResult): string =>
-    test.name
-      .split(' > ')
-      .pop() || '';
+const addSuiteTime = (time: number, test: TestResultWithMetadata) =>
+  time + (test.duration || 0) / 1000;
 
-const getSuiteName =
-  (test: TestResult): string =>
-    test.name
-      .split(' > ')
-      .slice(0, -1)
-      .join(' ');
+const getTestName = (test: TestResultWithMetadata): string => test.name;
 
-const getTestDurationInSeconds =
-  ({ duration }: TestResult): number =>
-      (typeof duration === 'undefined' ? 0 : duration) / 1000;
+const getSuiteName = (test: TestResultWithMetadata): string => test.suiteName;
+
+const getTestDurationInSeconds = ({ duration }: TestResult): number =>
+  (typeof duration === 'undefined' ? 0 : duration) / 1000;
 
 // A subset of invalid characters as defined in http://www.w3.org/TR/xml/#charsets that can occur in e.g. stacktraces
 // lifted from https://github.com/michaelleeallen/mocha-junit-reporter/blob/master/index.js (licensed MIT)
@@ -114,24 +105,19 @@ const INVALID_CHARACTERS_REGEX =
   // eslint-disable-next-line no-control-regex
   /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007f-\u0084\u0086-\u009f\uD800-\uDFFF\uFDD0-\uFDFF\uFFFF\uC008]/g;
 
-const stripXMLInvalidChars =
-  (x: string): string =>
-    x.replace(INVALID_CHARACTERS_REGEX, '');
+const stripXMLInvalidChars = (x: string): string => x.replace(INVALID_CHARACTERS_REGEX, '');
 
 /**
  * Makes a `<failure>` element
  */
-function testFailureXMLElement(test: TestResult): TestFailureXMLElement {
+function testFailureXMLElement(test: TestResultWithMetadata): TestFailureXMLElement {
   const { error } = test;
 
-  const message =
-    stripXMLInvalidChars(error?.message ?? '');
+  const message = stripXMLInvalidChars(error?.message ?? '');
 
-  const stack =
-    stripXMLInvalidChars(error?.stack ?? '');
+  const stack = stripXMLInvalidChars(error?.stack ?? '');
 
-  const type =
-    stack.match(/^\w+Error:/) ? stack.split(':')[0] : '';
+  const type = stack.match(/^\w+Error:/) ? stack.split(':')[0] : '';
 
   return {
     _attr: { message, type },
@@ -143,37 +129,35 @@ function testFailureXMLElement(test: TestResult): TestFailureXMLElement {
  * Makes attributes for a `<testcase>` element
  * @param test Test Result
  */
-function testCaseXMLAttributes(test: TestResult): TestCaseXMLAttributes {
-  const name =
-    getTestName(test);
+function testCaseXMLAttributes(test: TestResultWithMetadata): TestCaseXMLAttributes {
+  const name = getTestName(test);
 
-  const time =
-    getTestDurationInSeconds(test);
+  const time = getTestDurationInSeconds(test);
 
-  const classname =
-    getSuiteName(test);
+  const classname = getSuiteName(test);
 
   return {
     _attr: {
       name,
       time,
       classname,
-    }
+    },
   };
 }
 
 /**
  * Makes a `<testcase>` element
  */
-function testCaseXMLElement(test: TestResult): TestCaseXMLElement {
+function testCaseXMLElement(test: TestResultWithMetadata): TestCaseXMLElement {
   const attributes = testCaseXMLAttributes(test);
 
-  if (test.skipped)
-    return { testcase: [attributes, { skipped: null }]}
+  // prettier-ignore
+  if (isSkippedTest(test))
+    return { testcase: [attributes, { skipped: null }] };
   else if (isFailedTest(test))
-    return { testcase: [attributes, { failure: testFailureXMLElement(test) }] }
-  else
-    return { testcase: attributes }
+    return { testcase: [attributes, { failure: testFailureXMLElement(test) }] };
+  else // prettier-ignore
+    return { testcase: attributes };
 }
 
 /**
@@ -182,30 +166,20 @@ function testCaseXMLElement(test: TestResult): TestCaseXMLElement {
  * @param id Test Run ID
  * @param results Test Results
  */
-function testSuiteXMLAttributes(name: string, id: number, results: TestResultWithMetadata[]): TestSuiteXMLAttributes {
-  const tests =
-    results
-      .length;
+function testSuiteXMLAttributes(
+  name: string,
+  id: number,
+  results: TestResultWithMetadata[],
+): TestSuiteXMLAttributes {
+  const tests = results.length;
 
-  const skipped =
-    results
-      .filter(x => x.skipped)
-      .length;
+  const skipped = results.filter(x => x.skipped).length;
 
-  const errors =
-    results
-      .map(x => x.error)
-      .filter(Boolean)
-      .length;
+  const errors = results.map(x => x.error).filter(Boolean).length;
 
-  const failures =
-    results
-      .filter(isFailedTest)
-      .length;
+  const failures = results.filter(isFailedTest).length;
 
-  const time =
-    results
-      .reduce(addSuiteTime, 0);
+  const time = results.reduce(addSuiteTime, 0);
 
   return {
     _attr: {
@@ -216,8 +190,8 @@ function testSuiteXMLAttributes(name: string, id: number, results: TestResultWit
       errors,
       failures,
       time,
-    }
-  }
+    },
+  };
 }
 
 /**
@@ -225,16 +199,37 @@ function testSuiteXMLAttributes(name: string, id: number, results: TestResultWit
  * @param name Suite name
  * @param value User Agent String
  */
-function testSuitePropertiesXMLElement(name: string, value: string): TestSuitePropertiesXMLElement {
+function testSuitePropertiesXMLElement(
+  browserName: string,
+  userAgent: string,
+  testFile: string,
+): TestSuitePropertiesXMLElement[] {
   return [
     {
       property: {
         _attr: {
-          name,
-          value
-        }
-      }
-    }]
+          name: 'browser.name',
+          value: browserName,
+        },
+      },
+    },
+    {
+      property: {
+        _attr: {
+          name: 'browser.userAgent',
+          value: userAgent,
+        },
+      },
+    },
+    {
+      property: {
+        _attr: {
+          name: 'test.fileName',
+          value: testFile,
+        },
+      },
+    },
+  ];
 }
 
 /**
@@ -242,35 +237,27 @@ function testSuitePropertiesXMLElement(name: string, value: string): TestSuitePr
  * then stringifies the XML.
  * @param sessions Test Sessions
  */
-function getTestRunXML(sessions: TestSession[]): string {
-  const testsuites =
-    Object.entries(sessions
-      .flatMap(assignSessionPropertiesToTests)
-      .reduce(toResultsWithMetadataByBrowserName, {} as TestResultsWithMetadataByBrowserName))
-    .map(([name, tests]) => {
-      const [{ testRun = 0, userAgent = '' }] = tests;
-      const attributes =
-        testSuiteXMLAttributes(name, testRun, tests);
+function getTestRunXML(sessions: TestSession[], reportLogs: boolean): string {
+  const testsuites = Object.entries(
+    sessions
+      .flatMap(assignSessionAndSuitePropertiesToTests)
+      .reduce(toResultsWithMetadataByBrowserName, {} as TestResultsWithMetadataByBrowserName),
+  ).map(([name, tests]) => {
+    const [{ testRun = 0, userAgent = '', testFile }] = tests;
+    const attributes = testSuiteXMLAttributes(name, testRun, tests);
 
-      const properties =
-        testSuitePropertiesXMLElement(name, userAgent);
+    const properties = testSuitePropertiesXMLElement(name, userAgent, testFile);
 
-      const testcases =
-        tests.map(testCaseXMLElement);
+    const testcases = tests.map(testCaseXMLElement);
 
-      const testsuite =
-        [attributes, { properties }, ...testcases];
+    const systemOut = !reportLogs ? [] : tests.flatMap(escapeLogs).map(x => ({ 'system-out': x }));
 
-      const systemOut =
-        tests.flatMap(escapeLogs(name));
+    const testsuite = [attributes, { properties }, ...testcases, ...systemOut];
 
-      return {
-        testsuite,
-        'system-out': systemOut
-      }
-    });
+    return { testsuite };
+  });
 
-  return XML({ testsuites }, { declaration: true, indent: '  ' })
+  return XML({ testsuites }, { declaration: true, indent: '  ' });
 }
 
 /**
@@ -280,10 +267,11 @@ function getTestRunXML(sessions: TestSession[]): string {
  */
 export function junitReporter({
   outputPath = './test-results.xml',
+  reportLogs = false,
 }: JUnitReporterArgs = {}): Reporter {
   return {
     onTestRunFinished({ sessions }) {
-      const xml = getTestRunXML(sessions);
+      const xml = getTestRunXML(sessions, reportLogs);
       const filepath = path.join(process.cwd(), outputPath);
       fs.writeFileSync(filepath, xml);
     },

@@ -17,3 +17,11 @@ describe('off-by-one boolean logic errors', function () {
     chai.expect(false).to.be.false;
   });
 });
+
+describe('logging during a test', function () {
+  it('reports logs to JUnit', function () {
+    const actual = '🤷‍♂️';
+    console.log('actual is ', actual);
+    chai.expect(typeof actual).to.equal('string');
+  })
+})

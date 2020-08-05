@@ -183,6 +183,8 @@ it.only('sums up 2 numbers', () => {
 });
 ```
 
+_If you wish to ignore a test you can put `.skip` on it_
+
 Now we are talking
 
 ```
@@ -311,5 +313,7 @@ Finished running tests in 1s, all tests passed! 🎉
 ```
 
 ## Learn more
+
+All the code is available on [github](https://github.com/modernweb-dev/web/tree/master/demo/learn/watch-and-debug).
 
 See the [documentation of @web/test-runner](../../docs/test-runner/overview.md).
